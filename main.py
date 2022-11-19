@@ -26,7 +26,7 @@ class GstApi:
 
 
 class OsuApi:
-    def __init__(self, client_id, client_secret):
+    def __init__(self, client_id: str, client_secret: str):
         osu_client = BackendApplicationClient(client_id=client_id)
         oauth = OAuth2Session(client=osu_client)
         self.token = oauth.fetch_token(token_url='https://osu.ppy.sh/oauth/token', client_id=client_id,
