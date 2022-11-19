@@ -1,15 +1,28 @@
-import os
-import sched
-import time
 import logging
+import os
+import time
 from typing import List
 
+import requests
 import sqlalchemy as db
 from oauthlib.oauth2 import BackendApplicationClient
 from requests_oauthlib import OAuth2Session
 
 FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
+
+
+class GstApi:
+    def __init__(self, admin_hash: str):
+        self.user_hash = admin_hash
+        self.api_url = os.getenv("GST_API_URL")
+
+    def ban_user(self, osu_id: int):
+        header = {"Cookie": f"user_hash={self.user_hash}"}
+        params = {"user_osu_id": osu_id}
+        endpoint = f"{self.api_url}/user/ban"
+        requests.post(endpoint, headers=header, params=params)
+        logging.info(f"Sending post request to: {endpoint} with {header} and {params}")
 
 
 class OsuApi:
@@ -42,6 +55,7 @@ def update_users():
 
     conn, db_table_users = init_db()
     all_users = db_get_users(conn, db_table_users)
+    admin_user = db_get_admin(conn, db_table_users)
 
     column_names: List = db_table_users.columns.keys()
 
@@ -51,12 +65,15 @@ def update_users():
         old_osu_username = user[column_names.index("osu_username")]
         old_dc_username = user[column_names.index("discord_tag")]
         user_badges = user[column_names.index("badges")]
+        user_banned = user[column_names.index("is_banned")]
 
         user_details = osu_client.get_user(osu_id)
         if 'error' in user_details:
             logging.info(f"Errored for: {osu_id} - {old_osu_username} & {old_dc_username}")
-            delete_query = db_table_users.delete().where(db_table_users.columns.osu_id == osu_id)
-            conn.execute(delete_query)
+            if not user_banned:
+                logging.info(f"Banning user: {old_osu_username}")
+                gst_api = GstApi(admin_hash=admin_user[column_names.index("user_hash")])
+                gst_api.ban_user(osu_id=osu_id)
             continue
 
         new_osu_username = user_details["username"]
@@ -73,6 +90,13 @@ def update_users():
         logging.info(f"Updated a single user in: {time.perf_counter() - loop_start_time:.3f}s")
 
     logging.info(f"Updated all users in: {time.perf_counter() - start_time:.3f}s")
+
+
+def db_get_admin(conn, db_table_users):
+    query = db_table_users.select().where(db_table_users.columns.is_admin == True)
+    exe = conn.execute(query)
+    result = exe.fetchone()
+    return result
 
 
 def db_get_users(conn, db_table_users):
@@ -92,7 +116,7 @@ def init_db():
 
 
 if __name__ == '__main__':
-    s = sched.scheduler()
+    logging.info("Started running db-updater.")
     while True:
-        s.enter(900, 1, update_users)
-        s.run()
+        update_users()
+        time.sleep(900)
